@@ -1,0 +1,63 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+out/
+release/
+build/
+*.exe
+*.dmg
+*.deb
+*.rpm
+*.AppImage
+*.pkg
+*.msi
+
+# Electron / Playwright specific
+# Playwright downloads browsers (huge, ~200-500MB)
+playwright/.cache/
+ms-playwright/
+
+# User data / persistent profiles (contains cookies, login data)
+freeroam-chrome-profile/
+freeroam-profile/
+
+# Runtime data & logs
+*.log
+logs/
+*.pid
+*.seed
+*.pid.lock
+
+# Environment variables (if you ever add any)
+.env
+.env.local
+.env.*.local
+
+# OS generated files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editor / IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+.classpath
+
+# Temporary / cache folders
+tmp/
+temp/
+.cache/
+
+# Output folders from the app itself
+Freeroam Captures/
