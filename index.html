@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Freeroam Journal Capturer</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 30px; background: #111; color: #fff; text-align: center; }
+    input, #savePath { width: 100%; padding: 15px; font-size: 18px; margin: 10px 0; border-radius: 8px; }
+    button { padding: 15px 40px; font-size: 20px; background: #00cc66; color: black; border: none; border-radius: 8px; cursor: pointer; margin: 10px; }
+    button:hover { background: #00ff88; }
+    .reset { background: #cc3300 !important; }
+    .reset:hover { background: #ff5500 !important; }
+    .browse { background: #555 !important; font-size: 14px; padding: 8px 20px; }
+    #log { margin-top: 30px; text-align: left; background: #222; padding: 15px; border-radius: 8px; min-height: 200px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Freeroam Journal Capturer</h1>
+  <p>Paste the full /story URL below and click Capture</p>
+  
+  <input type="text" id="urlInput" placeholder="https://getfreeroam.com/world/.../story" />
+  
+  <div style="margin: 20px 0;">
+    <label>Save folder:</label><br>
+    <input type="text" id="savePath" readonly />
+    <button class="browse" onclick="browseFolder()">Browse...</button>
+  </div>
+
+  <button onclick="startCapture()">Capture Journal</button>
+  <button class="reset" onclick="resetLogin()">Reset Login</button>
+  
+  <div id="log"></div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    const logEl = document.getElementById('log');
+    const savePathEl = document.getElementById('savePath');
+
+    async function loadSavePath() {
+      savePathEl.value = await ipcRenderer.invoke('get-save-folder');
+    }
+    loadSavePath();
+
+    async function browseFolder() {
+      const newPath = await ipcRenderer.invoke('browse-folder');
+      savePathEl.value = newPath;
+    }
+
+    function log(msg) {
+      logEl.textContent += msg + '\n';
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    async function startCapture() {
+      logEl.textContent = '';
+      const url = document.getElementById('urlInput').value.trim();
+      const result = await ipcRenderer.invoke('start-capture', url);
+      if (!result.success) log(result.message);
+    }
+
+    async function resetLogin() {
+      logEl.textContent = '';
+      const result = await ipcRenderer.invoke('reset-login');
+      log(result.message);
+    }
+
+    ipcRenderer.on('status', (event, msg) => log(msg));
+  </script>
+</body>
+</html>
