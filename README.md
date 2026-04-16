@@ -7,7 +7,6 @@ A simple, double-clickable Windows tool that captures your **Freeroam** journal 
 - Paste any `/story` URL → captures the full journal via the official API
 - Saves a clean folder with `journal-raw.json` and nicely formatted `journal.md`
 - "Reset Login" button to clear cookies when needed
-- No terminal required — portable version installer available
 
 ## How to Use
 
