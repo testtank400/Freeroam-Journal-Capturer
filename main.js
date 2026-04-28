@@ -7,15 +7,12 @@ let mainWindow;
 const settingsPath = path.join(app.getPath('userData'), 'settings.json');
 let saveFolder = path.join(app.getPath('documents'), 'Freeroam Captures');
 
-// Load saved folder on startup
 async function loadSettings() {
   try {
     const data = await fs.readFile(settingsPath, 'utf8');
     const settings = JSON.parse(data);
     if (settings.saveFolder) saveFolder = settings.saveFolder;
-  } catch (e) {
-    // First run or no settings yet — use default
-  }
+  } catch (e) {}
 }
 
 async function saveSettings() {
@@ -77,14 +74,16 @@ ipcMain.handle('start-capture', async (event, url) => {
     return { success: false, message: '❌ Please provide a valid Freeroam URL (must contain /world/)' };
   }
 
-  // TRIM: Remove anything after the world ID (e.g., /story, /anything)
+  // Trim anything after the world ID (stops at next slash or end of string)
   const worldIdIndex = url.indexOf('/world/');
   if (worldIdIndex !== -1) {
-    const endIndex = worldIdIndex + 6 + 36; // /world/ + 36-char UUID
-    url = url.substring(0, endIndex);
+    const afterWorld = url.substring(worldIdIndex + 7);
+    const nextSlash = afterWorld.indexOf('/');
+    if (nextSlash !== -1) {
+      url = url.substring(0, worldIdIndex + 7 + nextSlash);
+    }
   }
 
-  // Extract world ID
   const worldIdMatch = url.match(/\/world\/([a-f0-9-]+)/i);
   if (!worldIdMatch) {
     return { success: false, message: '❌ Could not extract world ID from URL' };
@@ -114,24 +113,82 @@ ipcMain.handle('start-capture', async (event, url) => {
 
   const page = context.pages()[0] || await context.newPage();
 
-  // Go to the story page (establishes session)
   await page.goto(url, { waitUntil: 'networkidle', timeout: 0 });
+  await page.waitForTimeout(800);
 
-  // Direct API call
+  // Get the world name from the new API
+  const worldDataUrl = `https://getfreeroam.com/internal-world-story-json/${worldId}`;
+  mainWindow.webContents.send('status', `📡 Fetching world data...`);
+
+  let folderTitle = 'Untitled World';
+  try {
+    const worldResponse = await page.evaluate(async (url) => {
+      const res = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          'accept': 'application/json',
+          'accept-language': 'en-US,en;q=0.9',
+          'cache-control': 'no-cache',
+          'pragma': 'no-cache',
+          'priority': 'u=1, i',
+          'sec-ch-ua': '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
+          'sec-ch-ua-mobile': '?0',
+          'sec-ch-ua-platform': '"Windows"',
+          'sec-fetch-dest': 'empty',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-site': 'same-origin'
+        }
+      });
+      return await res.json();
+    }, worldDataUrl);
+
+    if (worldResponse.world && worldResponse.world.name) {
+      folderTitle = worldResponse.world.name;
+      mainWindow.webContents.send('status', `📝 World name: ${folderTitle}`);
+    }
+  } catch (e) {
+    mainWindow.webContents.send('status', `⚠️ Could not fetch world name, using page title`);
+    folderTitle = (await page.title()).replace(/[/\\?%*:|"<>]/g, '_');
+  }
+
+  // Get the journal
   const journalUrl = `https://getfreeroam.com/api/world/${worldId}/journal`;
   mainWindow.webContents.send('status', `📡 Calling journal API directly...`);
 
   try {
-    const response = await context.request.get(journalUrl);
-    const json = await response.json();
+    const json = await page.evaluate(async (url) => {
+      const res = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          'accept': '*/*',
+          'accept-language': 'en-US,en;q=0.9',
+          'cache-control': 'no-cache',
+          'pragma': 'no-cache',
+          'priority': 'u=1, i',
+          'sec-ch-ua': '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
+          'sec-ch-ua-mobile': '?0',
+          'sec-ch-ua-platform': '"Windows"',
+          'sec-fetch-dest': 'empty',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-site': 'same-origin'
+        }
+      });
+      return await res.json();
+    }, journalUrl);
 
-    const title = (await page.title()).replace(/[/\\?%*:|"<>]/g, '_');
+    if (json.detail) {
+      mainWindow.webContents.send('status', `❌ API Error: ${json.detail}`);
+      await context.close();
+      return;
+    }
+
     const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-    const folderName = `${title} - ${timestamp}`;
+    const folderName = `${folderTitle} - ${timestamp}`;
     const folderPath = path.join(saveFolder, folderName);
 
     await fs.mkdir(folderPath, { recursive: true });
-
     await fs.writeFile(path.join(folderPath, 'journal-raw.json'), JSON.stringify(json, null, 2));
     const md = await convertToMarkdown(json);
     await fs.writeFile(path.join(folderPath, 'journal.md'), md);
@@ -140,8 +197,10 @@ ipcMain.handle('start-capture', async (event, url) => {
     dialog.showMessageBox(mainWindow, { message: `Journal saved!\n\nFolder: ${folderPath}` });
 
     shell.openPath(folderPath);
+    await context.close();
   } catch (e) {
-    mainWindow.webContents.send('status', `❌ API error: ${e.message}`);
+    mainWindow.webContents.send('status', `❌ Error: ${e.message}`);
+    await context.close();
   }
 });
 
