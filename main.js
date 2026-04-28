@@ -59,7 +59,7 @@ ipcMain.handle('browse-folder', async () => {
   });
   if (!result.canceled) {
     saveFolder = result.filePaths[0];
-    await saveSettings();           // ← remember it
+    await saveSettings();
   }
   return saveFolder;
 });
@@ -73,9 +73,23 @@ ipcMain.handle('reset-login', async () => {
 });
 
 ipcMain.handle('start-capture', async (event, url) => {
-  if (!url || !url.includes('/story')) {
-    return { success: false, message: '❌ Please provide a full Freeroam /story URL' };
+  if (!url || !url.includes('/world/')) {
+    return { success: false, message: '❌ Please provide a valid Freeroam URL (must contain /world/)' };
   }
+
+  // TRIM: Remove anything after the world ID (e.g., /story, /anything)
+  const worldIdIndex = url.indexOf('/world/');
+  if (worldIdIndex !== -1) {
+    const endIndex = worldIdIndex + 6 + 36; // /world/ + 36-char UUID
+    url = url.substring(0, endIndex);
+  }
+
+  // Extract world ID
+  const worldIdMatch = url.match(/\/world\/([a-f0-9-]+)/i);
+  if (!worldIdMatch) {
+    return { success: false, message: '❌ Could not extract world ID from URL' };
+  }
+  const worldId = worldIdMatch[1];
 
   const userDataDir = path.join(app.getPath('userData'), 'freeroam-profile');
   const profileExists = require('fs').existsSync(path.join(userDataDir, 'Default'));
@@ -100,47 +114,34 @@ ipcMain.handle('start-capture', async (event, url) => {
 
   const page = context.pages()[0] || await context.newPage();
 
-  let captured = false;
-  context.on('response', async (response) => {
-    const reqUrl = response.url();
-    if (captured || !reqUrl.includes('/api/world/') || !reqUrl.includes('/journal')) return;
-
-    captured = true;
-    mainWindow.webContents.send('status', '✅ Journal API captured! Saving files...');
-
-    try {
-      const json = await response.json();
-      const title = (await page.title()).replace(/[/\\?%*:|"<>]/g, '_');
-      const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-      const folderName = `${title} - ${timestamp}`;
-      const folderPath = path.join(saveFolder, folderName);
-
-      await fs.mkdir(folderPath, { recursive: true });
-
-      await fs.writeFile(path.join(folderPath, 'journal-raw.json'), JSON.stringify(json, null, 2));
-      const md = await convertToMarkdown(json);
-      await fs.writeFile(path.join(folderPath, 'journal.md'), md);
-
-      mainWindow.webContents.send('status', `🎉 SUCCESS! Saved to: ${folderPath}`);
-      dialog.showMessageBox(mainWindow, { message: `Journal saved!\n\nFolder: ${folderPath}` });
-
-      shell.openPath(folderPath);
-      await context.close();
-    } catch (e) {
-      mainWindow.webContents.send('status', `❌ Save error: ${e.message}`);
-    }
-  });
-
+  // Go to the story page (establishes session)
   await page.goto(url, { waitUntil: 'networkidle', timeout: 0 });
 
-  try {
-    await page.getByRole('tab', { name: /journal/i }).click({ timeout: 8000 });
-  } catch (e) {}
+  // Direct API call
+  const journalUrl = `https://getfreeroam.com/api/world/${worldId}/journal`;
+  mainWindow.webContents.send('status', `📡 Calling journal API directly...`);
 
-  if (headless) {
-    mainWindow.webContents.send('status', '✅ Running invisibly in background.');
-  } else {
-    mainWindow.webContents.send('status', '👋 Chrome opened visibly. Log in if needed.');
+  try {
+    const response = await context.request.get(journalUrl);
+    const json = await response.json();
+
+    const title = (await page.title()).replace(/[/\\?%*:|"<>]/g, '_');
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const folderName = `${title} - ${timestamp}`;
+    const folderPath = path.join(saveFolder, folderName);
+
+    await fs.mkdir(folderPath, { recursive: true });
+
+    await fs.writeFile(path.join(folderPath, 'journal-raw.json'), JSON.stringify(json, null, 2));
+    const md = await convertToMarkdown(json);
+    await fs.writeFile(path.join(folderPath, 'journal.md'), md);
+
+    mainWindow.webContents.send('status', `🎉 SUCCESS! Saved to: ${folderPath}`);
+    dialog.showMessageBox(mainWindow, { message: `Journal saved!\n\nFolder: ${folderPath}` });
+
+    shell.openPath(folderPath);
+  } catch (e) {
+    mainWindow.webContents.send('status', `❌ API error: ${e.message}`);
   }
 });
 
