@@ -27,6 +27,9 @@ cd freeroam-journal-capturer
 # Install dependencies
 npm install
 
+# Install Playwright browsers (only needed once)
+npx playwright install chromium
+
 # Run in development mode
 npm start
 
