@@ -34,7 +34,40 @@ function createWindow() {
   mainWindow.setMenu(null);
 }
 
+// Handles both old and new journal formats
 async function convertToMarkdown(json) {
+  // NEW FORMAT: Has "summary" and "compressedSummaries"
+  if (json.summary || json.compressedSummaries) {
+    let md = `# ${json.summary ? 'Story Summary' : 'Journal Export'}\n\n`;
+    
+    if (json.summary) {
+      md += `## Summary\n\n${json.summary}\n\n---\n\n`;
+    }
+
+    if (json.compressedSummaries && json.compressedSummaries.length > 0) {
+      md += `## Chapter Summaries\n\n`;
+      json.compressedSummaries.forEach((item, i) => {
+        const chapterNum = item.chapter_numbers ? item.chapter_numbers.join(', ') : i + 1;
+        md += `### Chapter ${chapterNum}\n\n${item.content}\n\n---\n\n`;
+      });
+    }
+
+    // Add narrative threads if they exist
+    if (json.narrativeThreads && json.narrativeThreads.length > 0) {
+      md += `## Narrative Threads\n\n`;
+      json.narrativeThreads.forEach(thread => {
+        md += `### ${thread.title}\n\n`;
+        if (thread.notes && thread.notes.length > 0) {
+          thread.notes.forEach(note => md += `- ${note}\n`);
+        }
+        md += `\n---\n\n`;
+      });
+    }
+
+    return md;
+  }
+
+  // OLD FORMAT: Has "entries" array or is itself an array
   if (Array.isArray(json?.entries) || Array.isArray(json)) {
     const entries = Array.isArray(json) ? json : json.entries || [];
     return entries.map((entry, i) => {
@@ -44,6 +77,8 @@ async function convertToMarkdown(json) {
       return `## ${title}\n**${new Date(date).toLocaleString()}**\n\n${content}\n\n---\n`;
     }).join('\n');
   }
+
+  // FALLBACK: Unknown format, just dump as JSON
   return `# Journal Export\n\n\`\`\`json\n${JSON.stringify(json, null, 2)}\n\`\`\``;
 }
 
@@ -144,7 +179,7 @@ ipcMain.handle('start-capture', async (event, url) => {
     }, worldDataUrl);
 
     if (worldResponse.world && worldResponse.world.name) {
-      folderTitle = worldResponse.world.name;
+      folderTitle = worldResponse.world.name.replace(/[/\\?%*:|"<>!]/g, '_');
       mainWindow.webContents.send('status', `📝 World name: ${folderTitle}`);
     }
   } catch (e) {
@@ -153,7 +188,7 @@ ipcMain.handle('start-capture', async (event, url) => {
   }
 
   // Get the journal
-  const journalUrl = `https://getfreeroam.com/api/world/${worldId}/journal`;
+  const journalUrl = `https://getfreeroam.com/api/world/${worldId}/journal?_t=${Date.now()}`;
   mainWindow.webContents.send('status', `📡 Calling journal API directly...`);
 
   try {
@@ -175,6 +210,11 @@ ipcMain.handle('start-capture', async (event, url) => {
           'sec-fetch-site': 'same-origin'
         }
       });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+
       return await res.json();
     }, journalUrl);
 
@@ -198,6 +238,7 @@ ipcMain.handle('start-capture', async (event, url) => {
 
     shell.openPath(folderPath);
     await context.close();
+
   } catch (e) {
     mainWindow.webContents.send('status', `❌ Error: ${e.message}`);
     await context.close();
