@@ -5,13 +5,15 @@
   <title>Freeroam Journal Capturer</title>
   <style>
     body { font-family: system-ui, sans-serif; padding: 30px; background: #111; color: #fff; text-align: center; }
-    input, #savePath { width: 100%; padding: 15px; font-size: 18px; margin: 10px 0; border-radius: 8px; }
+    input, #savePath { width: 100%; padding: 15px; font-size: 18px; margin: 10px 0; border-radius: 8px; box-sizing: border-box; }
     button { padding: 15px 40px; font-size: 20px; background: #00cc66; color: black; border: none; border-radius: 8px; cursor: pointer; margin: 10px; }
-    button:hover { background: #00ff88; }
-    .reset { background: #cc3300 !important; }
-    .reset:hover { background: #ff5500 !important; }
-    .browse { background: #555 !important; font-size: 14px; padding: 8px 20px; }
-    #log { margin-top: 30px; text-align: left; background: #222; padding: 15px; border-radius: 8px; min-height: 200px; white-space: pre-wrap; }
+    button:hover:not(:disabled) { background: #00ff88; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .reset { background: #cc3300 !important; color: #fff; }
+    .reset:hover:not(:disabled) { background: #ff5500 !important; }
+    .browse { background: #555 !important; color: #fff; font-size: 14px; padding: 8px 20px; }
+    #log { margin-top: 30px; text-align: left; background: #222; padding: 15px; border-radius: 8px; min-height: 200px; white-space: pre-wrap; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+    .hint { color: #888; font-size: 13px; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -23,11 +25,12 @@
   <div style="margin: 20px 0;">
     <label>Save folder:</label><br>
     <input type="text" id="savePath" readonly />
-    <button class="browse" onclick="browseFolder()">Browse...</button>
+    <button class="browse" id="browseBtn" onclick="browseFolder()">Browse...</button>
   </div>
 
-  <button onclick="startCapture()">Capture Journal</button>
-  <button class="reset" onclick="resetLogin()">Reset Login</button>
+  <button id="captureBtn" onclick="startCapture()">Capture Journal</button>
+  <button class="reset" id="resetBtn" onclick="resetLogin()">Reset Login</button>
+  <p class="hint">Captures time out if Freeroam hangs (nav ~60s, API ~30s). Raw JSON is always saved when a response is received.</p>
   
   <div id="log"></div>
 
@@ -35,6 +38,16 @@
     const { ipcRenderer } = require('electron');
     const logEl = document.getElementById('log');
     const savePathEl = document.getElementById('savePath');
+    const captureBtn = document.getElementById('captureBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const browseBtn = document.getElementById('browseBtn');
+
+    function setBusy(busy) {
+      captureBtn.disabled = busy;
+      resetBtn.disabled = busy;
+      browseBtn.disabled = busy;
+      captureBtn.textContent = busy ? 'Capturing…' : 'Capture Journal';
+    }
 
     async function loadSavePath() {
       savePathEl.value = await ipcRenderer.invoke('get-save-folder');
@@ -54,14 +67,42 @@
     async function startCapture() {
       logEl.textContent = '';
       const url = document.getElementById('urlInput').value.trim();
-      const result = await ipcRenderer.invoke('start-capture', url);
-      if (!result.success) log(result.message);
+      if (!url) {
+        log('❌ Paste a Freeroam world URL first.');
+        return;
+      }
+
+      setBusy(true);
+      try {
+        const result = await ipcRenderer.invoke('start-capture', url);
+        if (!result) {
+          log('❌ Capture returned no result (unexpected). Check the log above.');
+        } else if (!result.success) {
+          // Status events may already have logged details; ensure the final message is visible
+          if (result.message && !logEl.textContent.includes(result.message)) {
+            log(result.message);
+          }
+        } else if (result.message && !logEl.textContent.includes(result.message)) {
+          log(result.message);
+        }
+      } catch (e) {
+        log('❌ Capture crashed: ' + (e.message || String(e)));
+      } finally {
+        setBusy(false);
+      }
     }
 
     async function resetLogin() {
       logEl.textContent = '';
-      const result = await ipcRenderer.invoke('reset-login');
-      log(result.message);
+      setBusy(true);
+      try {
+        const result = await ipcRenderer.invoke('reset-login');
+        log(result?.message || 'Login reset.');
+      } catch (e) {
+        log('❌ Reset failed: ' + (e.message || String(e)));
+      } finally {
+        setBusy(false);
+      }
     }
 
     ipcRenderer.on('status', (event, msg) => log(msg));
